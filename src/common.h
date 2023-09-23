@@ -84,7 +84,7 @@ static const size_t kPageSize   = 1 << kPageShift;
 static const size_t kMaxSize    = 256 * 1024;
 static const size_t kAlignment  = 8;
 // For all span-lengths <= kMaxPages we keep an exact-size list in PageHeap.
-static const size_t kMaxPages = 1 << (20 - kPageShift);
+static const size_t kMaxPages = 1 << (29 - kPageShift);
 
 // Default bound on the total amount of thread caches.
 #ifdef TCMALLOC_SMALL_BUT_SLOW

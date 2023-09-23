@@ -117,7 +117,7 @@ static void TestPageHeap_Limit() {
     CHECK_EQ(errno, ENOMEM);
   }
 
-  CHECK_EQ(kMaxPages, 1 << (20 - kPageShift));
+  CHECK_EQ(kMaxPages, 1 << (29 - kPageShift));
 
   // We do not know much is taken from the system for other purposes,
   // so we detect the proper limit:
