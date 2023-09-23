@@ -271,10 +271,11 @@ REGISTER_MODULE_INITIALIZER(memfs_malloc, {
   if (FLAGS_memfs_malloc_path.length()) {
     SysAllocator* alloc = MallocExtension::instance()->GetSystemAllocator();
     HugetlbSysAllocator* hp =
-      new (hugetlb_space.buf) HugetlbSysAllocator(alloc);
+      new (hugetlb_space.buf) HugetlbSysAllocator(NULL);
     if (hp->Initialize()) {
       MallocExtension::instance()->SetSystemAllocator(hp);
     }
+	MallocExtension::instance()->ReleaseFreeMemory();
   }
 });
 
