@@ -50,6 +50,8 @@
 #include "common.h"
 #include "internal_logging.h"
 
+#include "memfs_malloc.h"
+
 // On systems (like freebsd) that don't define MAP_ANONYMOUS, use the old
 // form of the name instead.
 #ifndef MAP_ANONYMOUS
@@ -180,6 +182,7 @@ static union {
 } default_space;
 static const char sbrk_name[] = "SbrkSysAllocator";
 static const char mmap_name[] = "MmapSysAllocator";
+static const char hugetlb_name[] = "HugetlbSysAllocator";
 
 
 void* SbrkSysAllocator::Alloc(size_t size, size_t *actual_size,
@@ -350,6 +353,7 @@ static bool system_alloc_inited = false;
 void InitSystemAllocators(void) {
   MmapSysAllocator *mmap = new (mmap_space.buf) MmapSysAllocator();
   SbrkSysAllocator *sbrk = new (sbrk_space.buf) SbrkSysAllocator();
+  bool early_hugetlb = EnvToBool("TCMALLOC_MEMFS_EARLY", false);
 
   // In 64-bit debug mode, place the mmap allocator first since it
   // allocates pointers that do not fit in 32 bits and therefore gives
@@ -362,6 +366,17 @@ void InitSystemAllocators(void) {
   if (kDebugMode && sizeof(void*) > 4) {
     sdef->SetChildAllocator(mmap, 0, mmap_name);
     sdef->SetChildAllocator(sbrk, 1, sbrk_name);
+  } else if (early_hugetlb) {
+  	HugetlbSysAllocator *htlb = new (hugetlb_space.buf) HugetlbSysAllocator(NULL);
+	#define DEFAULT_EARLY_MEMFS_PATH "/dev/hugepages/"
+    if (htlb->Initialize((char *)DEFAULT_EARLY_MEMFS_PATH, strlen(DEFAULT_EARLY_MEMFS_PATH))) {
+    	sdef->SetChildAllocator(htlb, 0, hugetlb_name);
+		sdef->SetChildAllocator(mmap, 1, mmap_name);
+		sdef->SetChildAllocator(sbrk, 2, sbrk_name);
+	} else {
+		sdef->SetChildAllocator(sbrk, 0, sbrk_name);
+		sdef->SetChildAllocator(mmap, 1, mmap_name);
+	}
   } else {
     sdef->SetChildAllocator(sbrk, 0, sbrk_name);
     sdef->SetChildAllocator(mmap, 1, mmap_name);

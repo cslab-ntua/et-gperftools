@@ -60,6 +60,8 @@
 #include "internal_logging.h"
 #include "safe_strerror.h"
 
+#include "memfs_malloc.h"
+
 // TODO(sanjay): Move the code below into the tcmalloc namespace
 using tcmalloc::kLog;
 using tcmalloc::kCrash;
@@ -75,49 +77,21 @@ DEFINE_int64(memfs_malloc_limit_mb,
              "Limit total allocation size to the "
              "specified number of MiB.  0 == no limit.");
 DEFINE_bool(memfs_malloc_abort_on_fail,
-            EnvToBool("TCMALLOC_MEMFS_ABORT_ON_FAIL", false),
+            EnvToBool("TCMALLOC_MEMFS_ABORT_ON_FAIL", true),
             "abort() whenever memfs_malloc fails to satisfy an allocation "
             "for any reason.");
 DEFINE_bool(memfs_malloc_ignore_mmap_fail,
             EnvToBool("TCMALLOC_MEMFS_IGNORE_MMAP_FAIL", false),
             "Ignore failures from mmap");
 DEFINE_bool(memfs_malloc_map_private,
-            EnvToBool("TCMALLOC_MEMFS_MAP_PRIVATE", false),
+            EnvToBool("TCMALLOC_MEMFS_MAP_PRIVATE", true),
 	    "Use MAP_PRIVATE with mmap");
 DEFINE_bool(memfs_malloc_disable_fallback,
-            EnvToBool("TCMALLOC_MEMFS_DISABLE_FALLBACK", false),
+            EnvToBool("TCMALLOC_MEMFS_DISABLE_FALLBACK", true),
             "If we run out of hugepage memory don't fallback to default "
             "allocator.");
-
-// Hugetlbfs based allocator for tcmalloc
-class HugetlbSysAllocator: public SysAllocator {
-public:
-  explicit HugetlbSysAllocator(SysAllocator* fallback)
-    : failed_(true),  // To disable allocator until Initialize() is called.
-      big_page_size_(0),
-      hugetlb_fd_(-1),
-      hugetlb_base_(0),
-      fallback_(fallback) {
-  }
-
-  void* Alloc(size_t size, size_t *actual_size, size_t alignment);
-  bool Initialize();
-
-  bool failed_;          // Whether failed to allocate memory.
-
-private:
-  void* AllocInternal(size_t size, size_t *actual_size, size_t alignment);
-
-  int64 big_page_size_;
-  int hugetlb_fd_;       // file descriptor for hugetlb
-  off_t hugetlb_base_;
-
-  SysAllocator* fallback_;  // Default system allocator to fall back to.
-};
-static union {
-  char buf[sizeof(HugetlbSysAllocator)];
-  void *ptr;
-} hugetlb_space;
+DEFINE_bool(memfs_malloc_early,
+            EnvToBool("TCMALLOC_MEMFS_EARLY", false), "early memfs");
 
 // No locking needed here since we assume that tcmalloc calls
 // us with an internal lock held (see tcmalloc/system-alloc.cc).
@@ -225,14 +199,20 @@ void* HugetlbSysAllocator::AllocInternal(size_t size, size_t* actual_size,
   return reinterpret_cast<void*>(ptr);
 }
 
-bool HugetlbSysAllocator::Initialize() {
+bool HugetlbSysAllocator::Initialize(char *memfs_path, int memfs_path_len) {
   char path[PATH_MAX];
-  const int pathlen = FLAGS_memfs_malloc_path.size();
-  if (pathlen + 8 > sizeof(path)) {
-    Log(kCrash, __FILE__, __LINE__, "XX fatal: memfs_malloc_path too long");
-    return false;
+  int pathlen;
+  if (memfs_path) {
+	  pathlen = memfs_path_len;
+  	  memcpy(path, memfs_path, pathlen);
+  } else {
+	  pathlen = FLAGS_memfs_malloc_path.size();
+	  if (pathlen + 8 > sizeof(path)) {
+		Log(kCrash, __FILE__, __LINE__, "XX fatal: memfs_malloc_path too long");
+		return false;
+	  }
+  	  memcpy(path, FLAGS_memfs_malloc_path.data(), pathlen);
   }
-  memcpy(path, FLAGS_memfs_malloc_path.data(), pathlen);
   memcpy(path + pathlen, ".XXXXXX", 8);  // Also copies terminating \0
 
   int hugetlb_fd = mkstemp(path);
@@ -268,11 +248,15 @@ bool HugetlbSysAllocator::Initialize() {
 }
 
 REGISTER_MODULE_INITIALIZER(memfs_malloc, {
+  if (FLAGS_memfs_malloc_early) {
+	return;
+  }
+
   if (FLAGS_memfs_malloc_path.length()) {
     SysAllocator* alloc = MallocExtension::instance()->GetSystemAllocator();
     HugetlbSysAllocator* hp =
-      new (hugetlb_space.buf) HugetlbSysAllocator(NULL);
-    if (hp->Initialize()) {
+      new (hugetlb_space.buf) HugetlbSysAllocator(alloc);
+    if (hp->Initialize(NULL, 0)) {
       MallocExtension::instance()->SetSystemAllocator(hp);
     }
 	MallocExtension::instance()->ReleaseFreeMemory();
